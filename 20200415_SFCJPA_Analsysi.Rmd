@@ -1,0 +1,550 @@
+---
+title: "San Francisquito Creek NFIP Policy and Claims Analysis"
+author: "Kathleen Schaefer"
+date: "August 11, 2019"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load library, include=FALSE}
+library(tidycensus)
+library(tidyverse)
+library(viridis)
+library(tigris)
+library(sf)
+library(stringr)
+library(data.table)
+library(mapview)
+library(dplyr)
+library(DT)
+library(xtable)
+library(knitr)
+library(mapview)
+library(readxl)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(data.table)
+library(ggrepel)
+library(tidyverse)
+library("ggplot2")
+
+options(tigris_use_cache = TRUE)
+
+
+
+#my census key
+
+
+mykey <- "1f9b7c1588566ff1267876b4b095aee68aec5587"
+#census_api_key(mykey, install = TRUE)
+```
+
+```{r load data, include=FALSE}
+# Load the Bay Area Claim Data
+#Both are the same. Using the latter because the file name makes it clear that it is loss data and it includes the FEMA Date the data was extracted.
+#bayarea <- fread("D:/Dropbox/Dropbox/MyR/fema/bayarea.csv")
+
+bay_area_co_names <- c("Marin", "San Francisco","San Mateo","Santa Clara","Alameda","Contra Costa","Sonoma","Solano","Napa")
+SFCJPA_names <- c("MENLO PARK","EAST PALO ALTO", "PALO ALTO")
+SMcensus <- read_excel("data/SMcensus.xlsx")
+ca_fips <- read_excel("data/Fipscodes.xlsx")
+bay_area_fips <- read_excel("data/bay_area_fips.xlsx")
+bay_area_fips2 <- c(6001,6013, 6041,6055, 6075, 6081, 6085, 6095, 6097,NA)
+#This loads a mostly clean version of  the claims data
+bay_area_claims <- fread("data/20190331bayarealossdata.csv")
+#
+CA_policies <- fread("data/20200420_CA_2019_pol.csv")
+table(CA_policies$poleffdt)
+#Sum the building loss and the contents loss
+
+#input all years
+CA_policies_all <- fread("data/CA_policies.csv") 
+   
+
+bay_area_claims <- mutate(bay_area_claims, totalpaid = amountpaidonbuildingclaim + amountpaidoncontentsclaim)
+
+#These codes get the geography that is used for the maps.
+ca_county_income <- get_acs(geography = "tract", 
+                            state = "CA", 
+                            variables = "B19013_001", 
+                            geometry = TRUE
+                            )
+
+bay_area_income <- get_acs(geography = "tract", 
+                          variables = "B19013_001", 
+                          state = "CA", 
+                          county = bay_area_co_names, 
+                          geometry = TRUE)
+
+sm_sc_income <- get_acs(geography = "tract", 
+                        variables = "B19013_001", 
+                        state = "CA", 
+                        county = c("San Mateo", "Santa Clara"), 
+                        geometry = TRUE)
+
+
+```
+
+
+```{r include=FALSE}
+#This chunk of code cleans up the policy data
+
+#Clean up the policy data
+
+PaloAlto <- c("PAL ALTO","PALO AALTO","PALO ALTO","PALO ALTO","PALO ALTOCA","PALO ALTO CA","PALO ALTO CA", "PALO ALTO CA", "PALO ALT O", "PALO AALTO", "PALO ALTA", "PALO ALTO CA","	PALO ATLO","PALO PALO","PALTO ALTO","	PALO ATLO","PALO ATLO" )
+rownum1 <- which(CA_policies$reportedcity %in% PaloAlto)
+CA_policies[rownum1, "reportedcity"] <- "PALO ALTO"
+
+EastPaloAlto <- c("E PALO ALTO","EAST PALO ALTO")
+rownum1 <- which(CA_policies$reportedcity %in% EastPaloAlto)
+CA_policies[rownum1, "reportedcity"] <- "EAST PALO ALTO"
+
+CA_policies$reportedcity <- as.factor(CA_policies$reportedcity)
+
+#Clean up the claims data
+
+rownum <- which(bay_area_claims$GEOID == "06041132100" )
+                
+
+bay_area_claims[4564,3] <- "STENSON BEACH"
+
+
+MenloPark <-c("MENLO","MENTO PARK", "MENLO PARK")
+rownum1 <- which(bay_area_claims$reportedcity %in% MenloPark)
+bay_area_claims[rownum1, "reportedcity"] <- "MENLO PARK"
+
+
+```
+
+
+```{r include=FALSE}
+# Create a new censustract colum for merging.
+
+
+bay_area_claims$GEOID <- as.character(bay_area_claims$censustract)
+bay_area_claims$GEOID <- gsub('6001','06001',bay_area_claims$GEOID) 
+bay_area_claims$GEOID <- gsub('6013','06013',bay_area_claims$GEOID)
+bay_area_claims$GEOID <- gsub('6041','06041',bay_area_claims$GEOID)
+bay_area_claims$GEOID <- gsub('6055','06055',bay_area_claims$GEOID)
+bay_area_claims$GEOID <- gsub('6075','06075',bay_area_claims$GEOID)
+bay_area_claims$GEOID <- gsub('6081','06081',bay_area_claims$GEOID)
+bay_area_claims$GEOID <- gsub('6085','06085',bay_area_claims$GEOID)
+bay_area_claims$GEOID <- gsub('6095','06095',bay_area_claims$GEOID)
+bay_area_claims$GEOID <- gsub('6097','06097',bay_area_claims$GEOID)
+
+#this has all the data columns
+bay_area_claims_wgeo <-right_join(ca_county_income,bay_area_claims, by = 'GEOID')
+
+
+
+```
+
+
+```{r include=FALSE}
+# Create a new censustract colum for merging.
+CA_policiest <- CA_policies[,-2]
+bay_area_policies <- filter(CA_policiest, countycode %in% bay_area_fips2)
+bay_area_policies$GEOID <- as.character(bay_area_policies$censustract)
+bay_area_policies$GEOID <- gsub("6001","06001",bay_area_policies$GEOID) 
+bay_area_policies$GEOID <- gsub("6013","06013",bay_area_policies$GEOID)
+bay_area_policies$GEOID <- gsub("6041","06041",bay_area_policies$GEOID)
+bay_area_policies$GEOID <- gsub("6055","06055",bay_area_policies$GEOID)
+bay_area_policies$GEOID <- gsub("6075","06075",bay_area_policies$GEOID)
+bay_area_policies$GEOID <- gsub("6081","06081",bay_area_policies$GEOID)
+bay_area_policies$GEOID <- gsub("6085","06085",bay_area_policies$GEOID)
+bay_area_policies$GEOID <- gsub("6095","06095",bay_area_policies$GEOID)
+bay_area_policies$GEOID <- gsub("6097","06097",bay_area_policies$GEOID)
+
+
+
+#Extract just the amount paid from the bayarea loss data.
+bayarea2 <- select(bay_area_policies, GEOID, reportedcity, policycost, totalinsurancepremiumofthepolicy) 
+#attach(bayarea2)
+#merge the two to get the shape file for mapping.
+bay_area_policies_wgeo <- right_join (ca_county_income, bay_area_policies, by = "GEOID")
+
+#create a seporate file for just the residential properties
+bay_area_res_policies_wgeo <- bay_area_policies_wgeo %>%
+  filter(occupancytype == 1)
+
+bay_area_res_policies <- bay_area_policies %>%
+  filter(occupancytype == 1)
+table(bay_area_res_policies$policyeffectivedate)
+
+#extract out the data for East Palo Alto
+epa_area_res_policies <- bay_area_res_policies %>%
+  filter(reportedcity == "EAST PALO ALTO")
+write_csv(epa_area_res_policies, "epa_area_res_policies.csv")
+```
+
+
+```{r include=FALSE}
+
+#Filter San Mateo and Santa Clara Claims and Policy Data
+
+SMSC_claims_wgeo <- bay_area_claims_wgeo %>%
+                  filter(countycode == "6085" | countycode == "6081") 
+
+SMSC_policies_wgeo <- bay_area_policies_wgeo %>%
+                  filter(countycode == "6085" | countycode == "6081") %>%
+                  filter(occupancytype == "1")
+
+SFCJPA_claims_wgeo <- bay_area_claims_wgeo %>%
+  filter(reportedcity == "EAST PALO ALTO" | reportedcity == "PALO ALTO" | reportedcity == "MENLO PARK")
+
+SFCJPA_policies_wgeo <- bay_area_policies_wgeo %>%
+  filter(reportedcity == "EAST PALO ALTO" | reportedcity == "PALO ALTO" | reportedcity == "MENLO PARK")
+
+
+```
+
+```{r Sum here to this point, include=FALSE}
+#bayareasum <-  %>%
+# group_by(GEOID) %>%
+#  summarise("No_of_Claims" = n(),
+ #           "Building_Loss" = sum(amountpaidonbuildingclaim),
+#            "Content_Loss" = sum(amountpaidoncontentsclaim)
+  #          )
+#kable(bayareasum)
+#bayareaclaim <- right_join (ca_county_income, bayareasum, by = "GEOID")
+
+sum_sm_sc_claims_wgeo <- bay_area_claims_wgeo %>%
+  filter(bay_area_claims$countycode %in% c(6081, 6085)) %>%
+  group_by(GEOID) %>%
+  summarise("No_of_Claims" = n(),
+            "Building_Loss" = sum(amountpaidonbuildingclaim),
+            "Content_Loss" = sum(amountpaidoncontentsclaim),
+            "Total_Paid" = sum(totalpaid)
+            )
+#sm_sc_sum_geo <- right_join (ca_county_income, sm_sc_sum, by = "GEOID")
+
+
+sum_sm_sc_res_policies_wgeo <- bay_area_res_policies_wgeo %>%
+  filter(bay_area_res_policies$countycode %in% c(6081, 6085)) %>%
+  filter(policyeffectivedate > 2018) %>%
+  group_by(GEOID) %>%
+   summarize("Count" = n(),
+             "Ave_Building_Coverage" = mean(totalbuildinginsurancecoverage),
+             "Ave_Contents Coverage" = mean(totalcontentsinsurancecoverage),
+             "Ave CRS Discount" = mean(crsdiscount),
+             "Ave_Total_Premium" = mean(totalinsurancepremiumofthepolicy),
+             "Ave_Total_Policy Cost" = mean(policycost)
+             )
+
+sum_SFCJPA_claims_wgeo <- bay_area_claims_wgeo %>%
+                      filter(reportedcity == "EAST PALO ALTO" | reportedcity == "PALO ALTO" | reportedcity == "MENLO PARK") %>%
+                      group_by(GEOID) %>%
+                      summarise("No_of_Claims" = n(),
+                                "Building_Loss" = sum(amountpaidonbuildingclaim),
+                                "Content_Loss" = sum(amountpaidoncontentsclaim),
+                                "Total_Paid" = sum(totalpaid)
+                                   )
+
+
+
+sum_SFCJPA_res_policies_wgeo <- bay_area_res_policies_wgeo %>%
+                      filter(reportedcity == "EAST PALO ALTO" | reportedcity == "PALO ALTO" | reportedcity == "MENLO PARK") %>%
+                      filter(policyeffectivedate > 2018) %>%
+                      group_by(GEOID) %>%
+                      summarize(
+                            "Count" = n(),
+                            "Ave_Building_Coverage" = mean(totalbuildinginsurancecoverage),
+                            "Ave_Contents Coverage" = mean(totalcontentsinsurancecoverage),
+                            "Ave CRS Discount" = mean(crsdiscount),
+                            "Ave_Total_Premium" = mean(totalinsurancepremiumofthepolicy),
+                            "Ave_Total_Policy Cost" = mean(policycost)
+                                    )
+#
+sum_SFCJPA_res_policies_wgeo <- filter(sum_SFCJPA_res_policies_wgeo, GEOID != "06085511707")
+
+
+```
+
+
+
+
+```{r echo=FALSE}
+#This is a map to test the basic concepts.
+
+
+
+ggplot(bay_area_res_policies_wgeo) + 
+  geom_sf(aes(fill = totalinsurancepremiumofthepolicy), color = NA) + 
+  coord_sf(datum = NA) + 
+  theme_minimal() + 
+  scale_fill_viridis_c()
+```
+# Introduction
+The following is a set of maps and data tables displaying the results of an analysis of the NFIP claims and payments data for the San Fransiquito Creek JPA area. The data used in this analysis was downloaded from the FEMA NFIP open source data source. 
+
+#Maps
+
+Number of Claims since November 1977, by Census Tract for Menlo Park, Palo Alto and East Palo Alto.
+```{r echo=FALSE}
+
+mapview(sum_SFCJPA_claims_wgeo, zcol = "No_of_Claims", legend = TRUE, caption = "No Of Claims by Census Tract")
+
+```
+
+
+Total Claims Payments (Building and Contents) November 1977, by Census Tract for Menlo Park, Palo Alto and East Palo Alto.
+```{r echo=FALSE}
+
+mapview(sum_SFCJPA_claims_wgeo, zcol = "Total_Paid", legend = TRUE)
+
+```
+
+
+
+Current Total Number of Residential Policies by Census Tract for Menlo Park, Palo Alto and East Palo Alto. 
+```{r echo=FALSE}
+
+mapview(sum_SFCJPA_res_policies_wgeo, zcol = "Count", legend = TRUE)
+
+
+```
+
+Current Average Residential Policy Cost by Census Tract for Menlo Park, Palo Alto and East Palo Alto. 
+```{r echo=FALSE}
+
+mapview(sum_SFCJPA_res_policies_wgeo, zcol = "Ave_Total_Policy Cost", legend = TRUE)
+
+```
+
+#Data Tables
+
+FEMA uses the following codes to decribe the rate catigory (source: NFIP policy metatdata):
+
+
+"Indicates policy rating method:
+
+1 – Manual 
+
+2 – Specific 
+
+7 - Preferred Risk Policy (PRPs issued for eligible properties located within a non-Special Flood Hazard Area [non-SFHA]) 
+
+8 – Tentative 
+
+9 - MPPP Policy 
+
+A - Optional Post-1981 V Zone
+
+B – Pre-FIRM policies with elevation rating - Flood Insurance Manual rate tables. 
+
+E – FEMA Pre-FIRM Special Rates 
+
+G – Group Flood Insurance Policy (GFIP) 
+
+P – Preferred Risk Policy (A PRP renewal issued in the first year following a map revision for an eligible property that was newly mapped into the SFHA by the map revision, or new business written for an eligible property that was newly mapped into the SFHA by a map revision effective on or after October 1, 2008 – PRP Eligibility Extension) 
+
+Q – Preferred Risk Policy (subsequent PRP renewals where the previous policy year was reported as a ‘P’ or ‘Q’) 
+
+S – FEMA Special Rates 
+
+W – Pre-FIRM policies with elevation rating – Submit-for-Rate procedures"
+
+
+In the Bay Area, how many single family home policies are written by policy type and what are the average and maxium costs?
+  
+```{r echo=FALSE}
+ave_cost_by_res_pol_type <- bay_area_res_policies %>%
+                      filter(policyeffectivedate > 2018) %>%
+                      select(ratemethod, policycost,totalbuildinginsurancecoverage,totalcontentsinsurancecoverage,totalinsurancepremiumofthepolicy,crsdiscount)%>%
+                      group_by("Rate_Method" = ratemethod)%>%
+                      summarize("Count" = n(),
+                          "Ave_Building_Coverage" = mean(totalbuildinginsurancecoverage),
+                          "Ave_Contents Coverage" = mean(totalcontentsinsurancecoverage),
+                          "Ave CRS Discount" = mean(crsdiscount),
+                          "Ave_Total_Premium" = mean(totalinsurancepremiumofthepolicy),
+                          "Ave_Total_Policy Cost" = mean(policycost)
+                           )
+
+kable(ave_cost_by_res_pol_type, caption = "Average Residential Coverage and Premium Payments for the Bay Area by Rating Method")
+```
+
+
+Within the SFCJPA area, how many single family home policies are written by policy type and what are the average and maxium costs?
+
+```{r echo=FALSE}
+ave_cost_SFJPA_by_pol_type <- bay_area_policies %>%
+                      filter(reportedcity == "EAST PALO ALTO" | reportedcity == "PALO ALTO" | reportedcity == "MENLO PARK") %>%
+                      filter(occupancytype == 1) %>%
+                      filter(policyeffectivedate > 2018) %>%
+                     select(ratemethod, policycost,totalbuildinginsurancecoverage,totalcontentsinsurancecoverage,totalinsurancepremiumofthepolicy,crsdiscount)%>%
+                      group_by("Rate_Method" = ratemethod)%>%
+                      summarize("Count" = n(),
+                          "Ave_Building_Coverage" = mean(totalbuildinginsurancecoverage),
+                          "Ave_Contents Coverage" = mean(totalcontentsinsurancecoverage),
+                          "Ave CRS Discount" = mean(crsdiscount),
+                          "Ave_Total_Premium" = mean(totalinsurancepremiumofthepolicy),
+                          "Ave_Total_Policy Cost" = mean(policycost)
+                 )
+
+kable(ave_cost_SFJPA_by_pol_type, caption = "Average Residential Coverage and Premium Payments for the SFCJPA by Rating Method")
+ 
+```
+
+Assume we choose to target the areas downstream of Hightway 101.  
+```{r echo=FALSE}
+ds_101 <- c("06081611700","06081611800","06081611700","06081612000","06085504601")
+
+SFCJPA_res_ds101_policies <- bay_area_res_policies %>%
+   filter(GEOID %in% ds_101) %>%
+   filter(policyeffectivedate > 2018)
+
+ave_SFCJPA_res_ds101_policies <- SFCJPA_res_ds101_policies %>%
+   group_by(GEOID) %>%
+   group_by(floodzone)%>%
+   summarize("Count" = n(),
+            "Ave_Building_Coverage" = mean(totalbuildinginsurancecoverage),
+            "Ave_Contents Coverage" = mean(totalcontentsinsurancecoverage),
+            "Ave CRS Discount" = mean(crsdiscount),
+            "Ave_Total_Premium" = mean(totalinsurancepremiumofthepolicy),
+            "Ave_Total_Policy Cost" = mean(policycost)
+                 )
+kable(ave_SFCJPA_res_ds101_policies, caption = "Average Residential Coverage and Premium Payments for SFCJPA Homes Bayward of Highway 101")
+
+tot_SFCJPA_res_ds101_policies <- SFCJPA_res_ds101_policies %>%
+   group_by(GEOID, floodzone) %>%
+   summarize("Count" = n(),
+            "Total_Building_Coverage" = sum(totalbuildinginsurancecoverage),
+            "Total_Contents Coverage" = sum(totalcontentsinsurancecoverage),
+            "Total_CRS Discount" = sum(crsdiscount),
+            "Total_Total_Premium" = sum(totalinsurancepremiumofthepolicy),
+            "Total_Total_Policy Cost" = sum(policycost)
+                 )
+
+kable(tot_SFCJPA_res_ds101_policies, caption = "Current TotalResidential Coverage and Premium Payments for SFCJPA Homes Bayward of Highway 101")
+```
+
+
+
+Within the SFCJPA area, grouped by cenustract, how many single family home policies are written by policy type and what are the average and maxium costs?
+```{r echo=FALSE}
+ave_cost_SFJPA_by_res_pol_type <- bay_area_res_policies %>%
+                      filter(reportedcity == "EAST PALO ALTO" | reportedcity == "PALO ALTO" | reportedcity == "MENLO PARK") %>%
+                      filter(occupancytype == 1) %>%
+                      filter(policyeffectivedate > 2018) %>%
+                      select(censustract,ratemethod, policycost, totalinsurancepremiumofthepolicy)%>%
+                      group_by("Census_Tract" = censustract, "Rate_Method" = ratemethod)%>%
+                      summarize("Count" = n(),
+                                "Ave_Policy_Cost" = mean(policycost), 
+                                "Max_Policy" = max(policycost),
+                                "Total_Premium" = sum(totalinsurancepremiumofthepolicy) )
+kable(ave_cost_SFJPA_by_res_pol_type, caption = "Single Family Policies in the SFJPA by Census Tract")
+```
+
+
+
+
+Who is paying more than $5000 per year in the SFCJPA?
+
+```{r echo=FALSE}
+SFCJPA_policies_greater_than_5k <- bay_area_res_policies %>%
+      group_by(policycost) %>%
+   filter(reportedcity == "EAST PALO ALTO" | reportedcity == "PALO ALTO" | reportedcity == "MENLO PARK") %>%
+   filter(policyeffectivedate > 2018) %>%
+   filter(totalinsurancepremiumofthepolicy > 5000) %>%
+   select("No of Floors" = numberoffloorsininsuredbuilding, "Policy Cost" = policycost, "Rate Method" = ratemethod )
+   
+
+
+kable(SFCJPA_policies_greater_than_5k, caption = "Residential Polices Greater than $5000")
+```
+
+What years have there been claims in the bay area? 
+```{r}
+str(bay_area_claims)
+table(bay_area_claims$yearofloss)
+```
+```{r}
+bay_area_claims %>% group_by(yearofloss, countycode) %>% 
+  count() %>% 
+  ggplot(aes(yearofloss, n, fill = factor(countycode))) +
+    geom_col() +
+    scale_fill_brewer(palette = "Set3") +
+    scale_x_continuous(breaks = c(1980, 2000, 2020)) +
+    scale_y_continuous(labels = scales::comma) +
+    theme_minimal() +
+    labs(x = "Year", y = "Number of Claims", fill = "County", title = "Number of NFIP Claims by Year and County")
+```
+Let's filter out Sonoma
+```{r}
+bay_area_claims %>% filter(countycode != 6097) %>% 
+  group_by(yearofloss, countycode) %>% 
+  count() %>% 
+  ggplot(aes(yearofloss, n, fill = factor(countycode))) +
+    geom_col() +
+    scale_fill_brewer(palette = "Set3") +
+    scale_x_continuous(breaks = c(1980, 2000, 2020)) +
+    scale_y_continuous(labels = scales::comma) +
+    theme_minimal() +
+    labs(x = "Year", y = "Number of Claims", fill = "County", title = "Number of NFIP Claims by Year and County")
+```
+
+
+```{r}
+bay_area_claims %>% filter(countycode %in% c(6081,6085)) %>% 
+  group_by(yearofloss, county.x) %>% 
+  count() %>% 
+  ggplot(aes(yearofloss, n, fill = factor(county.x))) +
+    geom_col() +
+    scale_fill_brewer(palette = "Dark2") +
+    scale_x_continuous(breaks = c(1980, 2000, 2020)) +
+    scale_y_continuous(labels = scales::comma) +
+    theme_minimal() +
+    labs(x = "Year", y = "Number of Claims", fill = "County", title = "Number of NFIP Claims by Year and County")
+```
+```{r}
+str(CA_policies_all)
+names(CA_policies_all)
+CA_policies_all <- CA_policies_all[,-2]
+names(CA_policies_all)
+SFCJPA_pol_all_yrs <- CA_policies_all %>% 
+  select(c(1,7,8,10,21,23,30:35,40))
+
+
+SFCJPA_pol_all_yrs$policyeffectivedate <- as.Date(SFCJPA_pol_all_yrs$policyeffectivedate)
+SFCJPA_pol_all_yrs$year <- as.numeric(format(SFCJPA_pol_all_yrs$policyeffectivedate, "%Y"))
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+table(SFCJPA_pol_all_yrs$countycode)
+SFCJPA_pol_all_yrs %>% filter(countycode %in% c(6081,6085)) %>% 
+  group_by(year, countycode) %>% 
+  count() %>% 
+  ggplot(aes(year, n, fill = factor(countycode))) +
+    geom_col() +
+    scale_fill_brewer(palette = "Dark2") +
+ #   scale_x_continuous(breaks = c(1980, 2000, 2020)) +
+    scale_y_continuous(labels = scales::comma) +
+    theme_minimal() +
+    labs(x = "Year", y = "Number of Policies", fill = "County", title = "Number of NFIP Policies by Year and County")
+```
+ 
+
+
+```{r}
+
+SC_SMsum <-readRDS("data/SC_SMsum.rds")
+summary(SC_SMsum)
+```
+```{r}
+  ggplot(SC_SMsum,aes(year, monthlycount, fill = factor(county))) +
+    geom_col() +
+    scale_fill_brewer(palette = "Dark2") +
+ #   scale_x_continuous(breaks = c(1980, 2000, 2020)) +
+    scale_y_continuous(labels = scales::comma) +
+    theme_minimal() +
+    labs(x = "Year", y = "Number of Policies", fill = "County", title = "Number of NFIP Policies by Year and County")
+```
+
